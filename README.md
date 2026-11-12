@@ -1,305 +1,506 @@
+
 # TritonTube — Distributed Video Hosting Platform
 
-See [INTERVIEW_DEMO.md](INTERVIEW_DEMO.md) for the rehearsed five-minute demonstration
-and [the interview verification report](docs/INTERVIEW_VERIFICATION.md) for current results.
+A distributed, scalable, and fault-tolerant metadata-backed video hosting platform built using **Go, gRPC, and consistent hashing**.
 
-An original, runnable Go distributed video hosting demo: upload an MP4, transcode
-it to two MPEG-DASH representations, stream independently placed media files,
-and add or gracefully remove storage nodes without losing their content.
+TritonTube enables users to upload, store, and stream videos across multiple independent storage nodes. It supports adaptive MPEG-DASH streaming, dynamic cluster scaling, automatic file redistribution, and distributed metadata management using **etcd and the Raft consensus protocol**.
 
-Repository: [Shreyasi08/TritonTube](https://github.com/Shreyasi08/TritonTube).
-Module: `github.com/Shreyasi08/TritonTube`.
+---
+
+## 🚀 Features
+
+- 📦 **Distributed Video Storage with Consistent Hashing**
+  - Video files and segments are distributed across independent storage nodes using SHA-256-based consistent hashing.
+  - Virtual nodes improve key distribution and minimize data movement when storage nodes are added or removed.
+
+- 🔄 **Dynamic Cluster Scaling**
+  - Add or remove storage nodes through a gRPC-backed Admin CLI.
+  - Automatically redistribute affected files when cluster membership changes.
+  - SHA-256 checksum verification protects file integrity during migration.
+
+- 🎥 **Adaptive Video Streaming**
+  - Upload MP4 videos directly through a web interface.
+  - Automatically transcode videos into MPEG-DASH using FFmpeg.
+  - Support 360p and 720p video representations for adaptive playback, including audio.
+
+- ⚡ **gRPC-Based Microservices**
+  - Go HTTP web server for uploads, playback, and content routing.
+  - Independent gRPC storage servers for distributed file operations.
+  - Admin CLI for cluster management and monitoring.
+
+- 🛡️ **Fault-Tolerant Metadata**
+  - SQLite for local metadata persistence.
+  - Optional three-member etcd cluster using Raft consensus.
+  - Metadata operations remain available after a single etcd member failure, provided quorum is maintained.
+
+- 📊 **Reliability & Testing**
+  - Health checks, structured logging, and cluster monitoring.
+  - Automated unit, integration, race, and end-to-end tests.
+  - Docker Compose deployment and GitHub Actions CI.
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Programming Language | Go |
+| Client Communication | HTTP |
+| Inter-Service Communication | gRPC, Protocol Buffers |
+| Distributed Storage | Local filesystem across storage nodes |
+| Consistent Hashing | SHA-256, uint64 hash ring, virtual nodes |
+| Video Processing | FFmpeg, H.264, AAC |
+| Adaptive Streaming | MPEG-DASH, dash.js |
+| Metadata Storage | SQLite, etcd |
+| Distributed Consensus | Raft (via etcd) |
+| Containerization | Docker, Docker Compose |
+| Testing | Go testing, race detector, integration tests |
+
+---
+
+## 🏗️ System Architecture
 
 ```mermaid
-flowchart LR
-  Browser[Browser · dash.js] --> Web[Go HTTP server]
-  CLI[Go admin CLI] --> Web
-  Web --> DB[(Metadata / inventory · SQLite or optional etcd)]
-  Web --> FFmpeg[FFmpeg · 360p + 720p DASH]
-  Web --> Ring[SHA-256 consistent hash ring]
-  Ring --> S1[gRPC storage node 1]
-  Ring --> S2[gRPC storage node 2]
-  Ring --> S3[gRPC storage node 3]
+flowchart TB
+    U["👤 User / Browser"]
+    A["🖥️ Admin CLI"]
+
+    W["Go Web Server<br/>HTTP API · Upload · Playback"]
+    F["FFmpeg Transcoding<br/>360p / 720p MPEG-DASH"]
+    H["SHA-256 Consistent Hash Ring<br/>Virtual Nodes · Content Routing"]
+
+    S1["Storage Node 1<br/>gRPC · File Storage"]
+    S2["Storage Node 2<br/>gRPC · File Storage"]
+    S3["Storage Node 3<br/>gRPC · File Storage"]
+
+    M["Metadata Repository"]
+
+    DB["SQLite<br/>Local Metadata"]
+    E["etcd Cluster<br/>Raft Consensus"]
+
+    E1["etcd Member 1"]
+    E2["etcd Member 2"]
+    E3["etcd Member 3"]
+
+    U <-->|HTTP| W
+    A <-->|Cluster Administration| W
+
+    W --> F
+    F --> W
+    W --> H
+
+    H <-->|gRPC| S1
+    H <-->|gRPC| S2
+    H <-->|gRPC| S3
+
+    W <--> M
+    M --> DB
+    M --> E
+
+    E --- E1
+    E --- E2
+    E --- E3
+
+    classDef web fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef storage fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef metadata fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef processing fill:#f3e8ff,stroke:#9333ea,color:#581c87
+
+    class W,A web
+    class S1,S2,S3,H storage
+    class M,DB,E,E1,E2,E3 metadata
+    class F processing
 ```
 
-Each file is placed by `videoID/relativeFilename`, so segments of a video can
-live on different nodes. See [DESIGN.md](DESIGN.md) for migration guarantees and
-failure boundaries, and [the implementation plan](docs/IMPLEMENTATION_PLAN.md)
-for phases and validation.
+### Core Components
 
-## Prerequisites
+**1. Web Server**
+- Handles HTTP requests for video uploads, browsing, and streaming.
+- Coordinates FFmpeg transcoding and storage placement.
+- Routes file requests to the appropriate storage node.
+- Manages cluster membership and metadata operations.
 
-- Go **1.26+** (tested here with an isolated Go 1.27.4 toolchain).
-- FFmpeg and ffprobe on PATH, with the `libx264` encoder. The local integration
-  tests use actual media; they explicitly skip media tests when FFmpeg is absent.
-- Docker Engine/Desktop and Compose v2 for the container workflow. Local execution
-  needs neither Docker nor a SQLite installation; the SQLite driver is pure Go.
-- protoc 3.20+ only for changing protobufs. Generated bindings are included.
-- A modern browser with Media Source Extensions. dash.js is loaded from its
-  pinned CDN URL; playback needs internet access to load that library. Fonts
-  have system fallbacks.
+**2. Storage Nodes**
+- Independent Go servers exposing gRPC file services.
+- Store MPEG-DASH manifests and media segments.
+- Support streaming file uploads, downloads, and deletion.
 
-## Local quick start
+**3. Consistent Hash Ring**
+- Distributes files across storage nodes based on SHA-256 hashes.
+- Uses virtual nodes for improved distribution.
+- Recomputes ownership when nodes join or leave.
 
-```sh
-go test ./...
-go build ./...
+**4. Metadata Service**
+- Stores video metadata, file inventory, and cluster configuration.
+- Supports SQLite or an optional Raft-backed etcd cluster.
+
+**5. Admin CLI**
+- Lists cluster nodes.
+- Adds and gracefully removes storage nodes.
+- Monitors health and migration status.
+
+---
+
+## 📦 Consistent Hashing
+
+TritonTube uses **SHA-256-based consistent hashing** to distribute video files across storage servers.
+
+Each file is assigned a hash based on its video identifier and relative filename:
+
+```text
+key = videoID / relativeFilename
+hash = SHA256(key) → uint64
+```
+
+Storage nodes are mapped onto a circular hash ring using virtual nodes.
+
+The file is assigned to the first virtual node encountered clockwise from its hash position.
+
+### Why Consistent Hashing?
+
+Traditional modulo hashing can remap a large portion of stored content whenever the number of servers changes.
+
+Consistent hashing reduces unnecessary redistribution by changing ownership only for affected hash ranges.
+
+When a new storage node joins:
+
+1. The node is added to the hash ring.
+2. The system calculates updated file ownership.
+3. Affected files are copied to their new nodes.
+4. Checksums verify successful transfers.
+5. Cluster membership changes are committed after verification.
+6. Obsolete source copies can be cleaned up safely.
+
+The same mechanism supports graceful storage-node removal.
+
+---
+
+## 🎬 Video Upload & Streaming Workflow
+
+```mermaid
+sequenceDiagram
+    participant U as Browser
+    participant W as Web Server
+    participant F as FFmpeg
+    participant S as Storage Cluster
+    participant M as Metadata
+
+    U->>W: Upload MP4
+    W->>M: Create video metadata
+    W->>F: Transcode video
+    F-->>W: DASH manifest + media segments
+    W->>S: Distribute files using gRPC
+    S-->>W: Storage confirmation + checksums
+    W->>M: Mark video ready
+    W-->>U: Upload complete
+
+    U->>W: Request video playback
+    W->>S: Retrieve manifest and segments
+    S-->>W: Stream content
+    W-->>U: HTTP MPEG-DASH response
+```
+
+Videos are transcoded into MPEG-DASH format with 360p and 720p representations.
+
+The browser uses **dash.js** for adaptive playback, allowing the player to select an appropriate representation based on network conditions.
+
+---
+
+## 🛡️ Fault-Tolerant Metadata with Raft
+
+TritonTube supports an optional three-member etcd cluster for distributed metadata storage.
+
+etcd uses the **Raft consensus algorithm** to coordinate replicated metadata.
+
+- One member acts as the Raft leader.
+- Metadata writes are replicated through the Raft log.
+- A majority quorum is required for progress.
+- If the leader fails, the remaining members can elect a replacement.
+
+For a three-member cluster:
+
+```text
+Cluster size:       3
+Required quorum:    2
+Tolerated failures: 1
+```
+
+**Important:** Raft replication protects metadata availability. Video files themselves are not replicated, so unexpected storage-node loss can still make video content unavailable.
+
+---
+
+## 💻 Getting Started
+
+### Prerequisites
+
+- Go 1.26+
+- FFmpeg and ffprobe
+- Docker Desktop / Docker Compose (optional)
+- Protocol Buffers compiler (only when regenerating protobuf code)
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Shreyasi08/TritonTube.git
+cd TritonTube
+```
+
+### 2. Build the Project
+
+```bash
+go mod download
 make build
 ```
 
-Start these in **four separate terminals**, from the repository root:
+### 3. Start Storage Servers
 
-```sh
+Open three separate terminals:
+
+**Storage Node 1**
+
+```bash
 ./bin/storage -listen 127.0.0.1:9001 -data data/node1
+```
+
+**Storage Node 2**
+
+```bash
 ./bin/storage -listen 127.0.0.1:9002 -data data/node2
+```
+
+**Storage Node 3**
+
+```bash
 ./bin/storage -listen 127.0.0.1:9003 -data data/node3
-./bin/web -listen 127.0.0.1:8080 -db data/metadata.db -work data/tmp
 ```
 
-Generate sample media, then open **http://127.0.0.1:8080** and use the upload form:
+### 4. Start Web Server
 
-```sh
+In another terminal:
+
+```bash
+./bin/web -listen 127.0.0.1:8080 \
+  -db data/metadata.db \
+  -work data/tmp
+```
+
+Open:
+
+**http://127.0.0.1:8080**
+
+### 5. Upload and Stream a Video
+
+Generate a sample MP4:
+
+```bash
 make demo
-# Or generate a different output (the script refuses to overwrite files):
-./scripts/generate-sample.sh data/another-sample.mp4
 ```
 
-Upload using the API instead:
+Upload `data/sample.mp4` through the web interface.
 
-```sh
-curl --fail-with-body -F 'title=First light' -F 'file=@data/sample.mp4' \
-  http://127.0.0.1:8080/api/videos
-curl --fail http://127.0.0.1:8080/api/videos
-./bin/admin health
+The system automatically:
+- Transcodes the video into MPEG-DASH.
+- Distributes media files across storage nodes.
+- Records metadata.
+- Makes the video available for browser playback.
+
+---
+
+## 🔄 Dynamic Cluster Management
+
+### List Storage Nodes
+
+```bash
+./bin/admin list
 ```
 
-A successful upload returns HTTP 201 with an ID and `status: ready`. Open the
-corresponding library card or `/watch/ID`. The upload request stays open through
-transcoding; the UI shows upload progress and a processing message. Metadata
-polling shows other in-progress or failed uploads. Failed processing returns 422
-and records the diagnostic in metadata. Processing/finalization errors include the
-video ID in their JSON response and a Location header pointing to its metadata.
-Nothing claims readiness until all media files and the manifest have been stored.
+### Add a Storage Node
 
-## Add and remove a node locally
+Start a fourth storage server:
 
-Use the newly rebuilt binaries for web and all storage processes; restart any
-processes from an older build before migrating (the storage Info RPC is required).
-Keep the three original storage processes running. In a fifth terminal:
-
-```sh
+```bash
 ./bin/storage -listen 127.0.0.1:9004 -data data/node4
 ```
 
-Then:
+Register it with the cluster:
 
-```sh
-./bin/admin list
+```bash
 ./bin/admin add node4 127.0.0.1:9004
+```
+
+### Monitor Migration
+
+```bash
 ./bin/admin migration
-./bin/admin health
-# Play the video again, then gracefully remove an existing node:
+```
+
+### Remove a Storage Node
+
+```bash
 ./bin/admin remove node2
-./bin/admin list
+```
+
+Wait for migration to commit before shutting down the removed storage server.
+
+### Check Cluster Health
+
+```bash
 ./bin/admin health
 ```
 
-Each storage directory has a persistent hidden `.node-id`. Migration rejects two
-node names/addresses that report the same storage identity, including DNS aliases
-or processes sharing a directory. Keep this file with its data; copying a directory
-also copies its identity and does not create an independent node.
+---
 
-Stop node2 **after** removal returns `state: committed`. Reload the player and
-verify playback. The CLI returns nonzero for failed requests or unhealthy nodes.
-A committed migration can include `cleanup_errors` for retained obsolete copies;
-new routing remains valid. Membership and virtual-node count are persisted in
-the selected metadata backend, so restarting web keeps the latest topology. The `-nodes` flag seeds the
-first startup only; do not edit it to perform a migration. The virtual-node count
-(default 100, configurable with `-virtual-nodes`) cannot change against an existing
-database. Stable IDs, addresses and storage directories must survive restarts.
+## 🐳 Docker Deployment
 
-## Docker Compose
+Launch the default three-node system:
 
-Start Docker Desktop/Engine first:
-
-```sh
+```bash
 make up
-# Open http://127.0.0.1:8080, generate a sample on the host and upload it.
-make demo
-# Admin runs inside the web container (Go is not needed on the host):
-docker compose exec web admin list
-docker compose exec web admin health
-# Start optional fourth storage process, then explicitly join it:
+```
+
+Access the application at:
+
+**http://127.0.0.1:8080**
+
+Check running services:
+
+```bash
+docker compose ps
+```
+
+Add an optional fourth storage container:
+
+```bash
 docker compose --profile scale up -d --wait storage4
 docker compose exec web admin add node4 storage4:9001
-docker compose exec web admin migration
-docker compose exec web admin remove node2
-docker compose stop storage2
-# Verify video playback again before shutting down:
+```
+
+Stop the application:
+
+```bash
 make down
 ```
 
-Storage containers use standard gRPC health probes. The web container probes
-`/healthz` with `web -health-check`, checking availability of the selected metadata backend and committed
-storage-node health. Startup waits for the three storage nodes to become healthy.
-These probes do not perform a full file-integrity scan or verify free disk space.
+### Optional etcd Cluster
 
-Named volumes retain metadata and node data. `make down` preserves volumes;
-`make clean` only removes build/tool outputs. Starting the Compose cluster again
-after joining node4 also requires `--profile scale` so that node remains online.
-Compose waits for standard gRPC health checks before starting web. Only the HTTP
-port is published, on host loopback. Storage addresses in Compose are container
-DNS names, not host loopback addresses. Local and Compose runs have separate data.
-Do not run both on host port 8080 simultaneously.
+Launch the separate Raft-backed metadata deployment:
 
-## HTTP and gRPC interfaces
-
-| Method | Path | Result |
-| --- | --- | --- |
-| GET | `/` | Responsive upload form and video library |
-| GET | `/healthz` | Metadata and storage health; 503 if degraded |
-| POST | `/api/videos` | Multipart `file` MP4 and optional `title` |
-| GET | `/api/videos` | All video metadata including processing state |
-| GET | `/api/videos/{id}` | One record, or 404 |
-| GET | `/watch/{id}` | DASH player; 409 until ready |
-| GET, HEAD | `/stream/{id}/{filename}` | Verified content, ETag and byte ranges |
-| GET | `/api/cluster/nodes` | Committed membership |
-| GET | `/api/cluster/health` | Per-node health checks |
-| GET | `/api/cluster/migration` | Last/current migration state |
-| POST | `/api/cluster/nodes` | Add JSON `{"id":"node4","address":"host:port"}` |
-| DELETE | `/api/cluster/nodes/{id}` | Gracefully remove a node |
-
-The protobuf contract in `proto/storage/v1/storage.proto` defines streaming
-Upload, Download and List RPCs, Delete, and Info for persistent storage identity.
-Transfers use 64 KiB chunks with a 1 GiB per-file limit and mandatory SHA-256
-verification on upload. Uploads use
-confined filesystem roots and atomic rename after file sync. The standard gRPC
-health service is available; `storage -health-check HOST:PORT` checks it.
-
-## Development and tests
-
-```sh
-make proto        # Install pinned generators and regenerate protobuf Go files
-make build        # bin/web, bin/storage, bin/admin
-make check        # Formatting, vet, uncached regular/race tests and binary builds
-make test         # All unit and integration tests
-make test-race    # Same tests with Go race detector
-make test-e2e     # Generate MP4s; decode HTTP DASH before/after compiled CLI add/remove
-make test-compose # Build/run isolated containers; validate health, media, migration and restart
-make test-etcd    # Race-test metadata continuity after leader failure in real 3-member etcd
-make etcd-up      # Separate optional etcd deployment (project tritontube-etcd)
-make etcd-down    # Stop the etcd deployment; retain volumes
-make up           # Build and start the three-node Compose demo
-make down         # Stop containers; retain volumes
-make demo         # Generate a six-second sample MP4 using host FFmpeg
-make clean        # Remove bin/ and .tools/ only
+```bash
+TRITONTUBE_HTTP_PORT=8081 make etcd-up
 ```
 
-Tests start real loopback gRPC/HTTP servers and temporary SQLite databases.
-They cover SHA-256 truncation, deterministic/colliding ring positions, wraparound,
-limited remapping, path confinement, streaming round trips, concurrent storage,
-SQLite restart/rollback, upload errors, actual FFmpeg DASH generation with/without
-audio, HTTP ranges, manifest/segment retrieval and HTTP DASH decoding. Migration
-tests exercise add/remove, restart from committed membership, partial-transfer
-failure, source/destination checksum corruption, metadata commit failure, address
-alias rejection and rejection of concurrent topology changes.
-GitHub Actions defines Go validation, SQLite Compose lifecycle testing, and an
-optional-backend three-member etcd leader-failure test on Ubuntu runners.
-Local validation results are recorded separately; a remote CI run is not implied.
-Run the genuine generated-media test independently with `make test-e2e`. It starts
-three real gRPC nodes and an HTTP server with temporary SQLite storage, uploads
-MP4s with and without audio, verifies ready metadata/library/player routes and
-360p/720p representations, then decodes both video streams through the HTTP MPD.
-It also builds and invokes the admin CLI, adds a storage node, gracefully removes
-a node, stops the departed server and decodes the video again. Inventory checks
-compare every HTTP file against its recorded SHA-256 after each membership change.
-For a read-only audit of the normal Compose demo, run
-`python3 scripts/inspect-distribution.py VIDEO_ID --plan-add node4` from the repository
-root. This requires Python 3.9+, compares physical-node and HTTP checksums, and
-independently calculates ring ownership. `--baseline PATH` verifies that no video
-files/content were lost across a migration; `--virtual-nodes` must match the web
-configuration (default 100). Audit JSON can be saved under ignored `data/`.
-The script requires Go, FFmpeg and ffprobe and fails if any are missing.
+Access it at:
 
-`make test-compose` additionally requires a running Docker daemon, Compose v2+,
-and host FFmpeg/ffprobe. It creates a unique project, image tag, named volumes and
-dynamic loopback HTTP port, then removes its containers, volumes and image even on
-normal test failures. It never uses the default demo project's data or image tag.
-The test verifies initial playback, a fourth-node join, persisted four-node
-membership after restarting web, graceful removal and playback after stopping that
-node. Docker health status is checked separately from HTTP readiness. Hard process
-termination can prevent deferred cleanup; failed-test output includes the project
-name for targeted recovery. Do not use default-project `down --volumes` as cleanup
-for an isolated test. The ordinary Go suite skips this opt-in Docker test; explicit
-`make test-compose` fails if its prerequisites are unavailable.
+**http://127.0.0.1:8081**
 
-Go is not on this workspace's original PATH. The isolated toolchain wrapper used
-for local verification is `/tmp/tritontube-go-env`; for this session, for example:
-`/tmp/tritontube-go-env make check`. A normal Go installation on PATH is sufficient
-on another machine. Temporary tooling is not installed by the repository.
+Run the etcd failover tests:
 
-See [Phase 6 commands and outputs](docs/PHASE6_RESULTS.md),
-[optional etcd setup and limitations](docs/ETCD.md),
-[Phase 7 failover results](docs/PHASE7_RESULTS.md), and the
-[historical validation record](docs/VALIDATION.md).
-
-## Optional etcd metadata
-
-The default SQLite mode remains unchanged. To start the independent three-member
-etcd deployment and avoid the default demo's HTTP port:
-
-```sh
-TRITONTUBE_HTTP_PORT=8081 make etcd-up
-# Open http://127.0.0.1:8081; this uses its own metadata and storage volumes.
+```bash
 make test-etcd
+```
+
+Stop the deployment:
+
+```bash
 make etcd-down
 ```
 
-`-metadata etcd`, `-etcd-endpoints` and `-etcd-prefix` select externally configured
-client endpoints/namespaces for a native web process. See [ETCD.md](docs/ETCD.md)
-for exact commands. Metadata uses the official client, linearizable reads and
-revision-CAS transactions. The test abruptly kills the actual leader and verifies
-metadata continuity/new uploads with two survivors, then verifies errors after
-losing a second member. All media files remain unreplicated; this is metadata
-process-failure continuity, **not storage-file fault tolerance**.
+---
 
-## Demo limits
+## 🧪 Testing & Validation
 
-- Run **one web process** per metadata namespace/database in either mode. SQLite
-  is single-host metadata, not a distributed or fault-tolerant metadata service.
-  Optional etcd replicates metadata, but does not make the web process or media
-  storage fault tolerant. Back up metadata and storage consistently while stopped.
-- No authentication, TLS, quotas or internet-facing hardening. Cluster mutations
-  trust the administrator, including supplied node addresses. Use a trusted local
-  network; do not expose these ports publicly.
-- No replication or automatic recovery from unexpected storage loss. Graceful
-  removal needs readable source files. A crash before topology commit leaves old
-  routing and possibly extra destination copies; after commit, all destinations
-  have been verified. Full power-loss durability across machines is not claimed.
-- Topology changes pause file uploads/downloads while copying and committing.
-  The migration-status endpoint remains readable. Migration requests time out
-  after 10 minutes of context-bound work. In-process lock waits and bounded
-  post-commit cleanup may extend wall-clock response time. Health probes can be
-  temporarily degraded during a long migration. Docker marks health status but
-  does not automatically restart a container merely because it is unhealthy.
-  Large libraries need a resumable background migration design.
-- At most two upload requests process concurrently, with a 512 MiB MP4 limit,
-  10-minute duration limit and an 8-minute FFmpeg deadline. Request cancellation
-  stops FFmpeg/RPC work. Only one source video stream and first audio stream are
-  selected. 360p/720p may upscale small input. No thumbnail extraction or deletion UI.
-- Transfers stay bounded in memory. HTTP responses and migration verification
-  spool one file to disk for checksum checks/range support; provision free space.
-  Normal errors remove temporary media. Hard process termination can leave temporary
-  work, staging files or untracked copies if metadata recording failed after storage
-  publication. Reconcile them manually while stopped; no automatic garbage collector.
-  Concurrent viewer requests are not globally bounded and can exhaust spool space.
-- Interrupted upload/processing records become failed when web restarts. Failed
-  uploads retain recorded source/partial output for diagnosis and migration; they
-  are not playable. No retry worker or automatic transcoding recovery.
-- Optional etcd stores one CAS-protected JSON state capped at **1 MiB total encoded
-  metadata**, rewriting it on each mutation. It is a small-library demo with five-second
-  operation deadlines, no coordinator lease and no automatic SQLite import. An
-  indeterminate remote topology commit fences further file writes/membership changes
-  until metadata recovers and the coordinator is restarted. The three local etcd
-  containers share a host; no host-failure or five-member/two-failure survival claim
-  is made. Local etcd is plaintext and unauthenticated. See ETCD.md for details.
+TritonTube includes automated tests for distributed storage, consistency, video streaming, and fault tolerance.
+
+### Run Tests
+
+```bash
+make test
+make test-race
+make test-e2e
+make test-compose
+make test-etcd
+```
+
+### Verified Results
+
+| Test | Result |
+|------|--------|
+| Unit and integration tests | Passed |
+| Go race detector and builds | Passed |
+| Docker Compose integration | Passed |
+| Video upload and DASH decoding | Passed |
+| Distributed file placement | 15/15 files verified |
+| Node addition | 4 files migrated successfully |
+| Node removal | 4 files migrated successfully |
+| Playback following migration | Passed |
+| etcd leader failure | Metadata operations continued |
+| etcd quorum loss | Operations correctly failed |
+| Browser video and audio playback | Verified |
+
+Validation includes real HTTP and gRPC servers, generated media files, checksum comparisons, and cluster migration tests.
+
+See [Interview Verification Report](docs/INTERVIEW_VERIFICATION.md) for detailed test results.
+
+---
+
+## 🗂️ Repository Structure
+
+```text
+TritonTube/
+├── cmd/
+│   ├── web/             # HTTP web server
+│   ├── storage/         # gRPC storage servers
+│   └── admin/           # Cluster management CLI
+├── internal/
+│   ├── api/             # HTTP handlers
+│   ├── hashring/        # Consistent hashing
+│   ├── storage/         # Distributed file storage
+│   ├── metadata/        # SQLite and etcd backends
+│   ├── transcode/       # FFmpeg processing
+│   ├── cluster/         # Node membership and migration
+│   └── observability/   # Health and logging
+├── proto/               # Protocol Buffer definitions
+├── web/                 # Frontend templates and assets
+├── scripts/             # Development and testing scripts
+├── tests/               # Integration tests
+├── docs/                # Documentation and verification
+├── docker-compose.yml
+├── Makefile
+├── DESIGN.md
+├── INTERVIEW_DEMO.md
+├── go.mod
+└── README.md
+```
+
+---
+
+## ⚠️ Current Limitations
+
+- Video media files are not replicated across storage nodes.
+- Unexpected storage-node failures do not trigger automatic recovery.
+- The web coordinator is currently a single point of failure.
+- Cluster migration temporarily pauses file operations.
+- The system is intended for local development and demonstration; authentication, TLS, and production-scale orchestration are not implemented.
+
+Future improvements could include replicated media storage, background migration, automatic failure recovery, and horizontal scaling of the web coordinator.
+
+---
+
+## 📚 Documentation
+
+- [System Design](DESIGN.md)
+- [Interview Demo Guide](INTERVIEW_DEMO.md)
+- [Verification Report](docs/INTERVIEW_VERIFICATION.md)
+- [etcd Setup & Limitations](docs/ETCD.md)
+
+---
+
+## 👩‍💻 Author
+
+**Shreyasi Nath**
+
+GitHub: [@Shreyasi08](https://github.com/Shreyasi08)
+
+---
+
+**TritonTube — Exploring distributed systems through scalable video storage, streaming, and fault-tolerant metadata management.**
