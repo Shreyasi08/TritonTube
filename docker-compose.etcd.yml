@@ -1,0 +1,57 @@
+# Optional overlay: use with docker-compose.yml and --profile etcd.
+x-etcd: &etcd
+  image: gcr.io/etcd-development/etcd:v3.6.16
+  profiles: ["etcd"]
+  restart: "no"
+  environment: &etcd-env
+    ETCD_DATA_DIR: /etcd-data
+    ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+    ETCD_INITIAL_CLUSTER: etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+    ETCD_INITIAL_CLUSTER_STATE: new
+    ETCD_INITIAL_CLUSTER_TOKEN: tritontube-etcd-demo
+    ETCD_LOG_LEVEL: warn
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://127.0.0.1:2379", "--command-timeout=2s", "endpoint", "health"]
+    interval: 5s
+    timeout: 4s
+    retries: 15
+    start_period: 5s
+services:
+  etcd1:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
+    ports: ["127.0.0.1:${TRITONTUBE_ETCD1_PORT:-2379}:2379"]
+    volumes: ["etcd1:/etcd-data"]
+  etcd2:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
+    ports: ["127.0.0.1:${TRITONTUBE_ETCD2_PORT:-2381}:2379"]
+    volumes: ["etcd2:/etcd-data"]
+  etcd3:
+    <<: *etcd
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
+    ports: ["127.0.0.1:${TRITONTUBE_ETCD3_PORT:-2383}:2379"]
+    volumes: ["etcd3:/etcd-data"]
+  web:
+    command: ["web", "-listen", ":8080", "-work", "/data/tmp", "-metadata", "etcd", "-etcd-endpoints", "http://etcd1:2379,http://etcd2:2379,http://etcd3:2379", "-etcd-prefix", "/tritontube", "-nodes", "node1=storage1:9001,node2=storage2:9001,node3=storage3:9001"]
+    depends_on:
+      etcd1: {condition: service_healthy}
+      etcd2: {condition: service_healthy}
+      etcd3: {condition: service_healthy}
+volumes:
+  etcd1:
+  etcd2:
+  etcd3:

@@ -1,0 +1,51 @@
+name: tritontube
+x-storage: &storage
+  image: ${TRITONTUBE_IMAGE:-tritontube:local}
+  build: .
+  command: ["storage", "-listen", ":9001", "-data", "/data/files"]
+  restart: unless-stopped
+  stop_grace_period: 20s
+  healthcheck:
+    test: ["CMD", "storage", "-health-check", "127.0.0.1:9001"]
+    interval: 5s
+    timeout: 4s
+    retries: 10
+    start_period: 5s
+services:
+  storage1:
+    <<: *storage
+    volumes: ["node1:/data"]
+  storage2:
+    <<: *storage
+    volumes: ["node2:/data"]
+  storage3:
+    <<: *storage
+    volumes: ["node3:/data"]
+  storage4:
+    <<: *storage
+    profiles: ["scale"]
+    volumes: ["node4:/data"]
+  web:
+    image: ${TRITONTUBE_IMAGE:-tritontube:local}
+    build: .
+    command: ["web", "-listen", ":8080", "-db", "/data/metadata.db", "-work", "/data/tmp", "-nodes", "node1=storage1:9001,node2=storage2:9001,node3=storage3:9001"]
+    ports: ["127.0.0.1:${TRITONTUBE_HTTP_PORT:-8080}:8080"]
+    volumes: ["metadata:/data"]
+    restart: unless-stopped
+    stop_grace_period: 20s
+    depends_on:
+      storage1: {condition: service_healthy}
+      storage2: {condition: service_healthy}
+      storage3: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "web", "-health-check", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 10s
+volumes:
+  node1:
+  node2:
+  node3:
+  node4:
+  metadata:

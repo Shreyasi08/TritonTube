@@ -1,0 +1,33 @@
+syntax = "proto3";
+package tritontube.storage.v1;
+option go_package = "github.com/Shreyasi08/TritonTube/proto/storage/v1;storagev1";
+
+service Storage {
+  rpc Info(InfoRequest) returns (NodeInfo);
+  rpc Upload(stream UploadRequest) returns (FileInfo);
+  rpc Download(FileRequest) returns (stream DownloadResponse);
+  rpc List(ListRequest) returns (stream FileInfo);
+  rpc Delete(FileRequest) returns (DeleteResponse);
+}
+message UploadRequest {
+  oneof payload {
+    FileHeader header = 1;
+    bytes chunk = 2;
+  }
+}
+message FileHeader {
+  string key = 1;
+  string sha256 = 2;
+}
+message FileRequest { string key = 1; }
+message DownloadResponse { bytes chunk = 1; }
+message ListRequest {}
+message DeleteResponse {}
+message FileInfo {
+  string key = 1;
+  int64 size = 2;
+  string sha256 = 3;
+}
+
+message InfoRequest {}
+message NodeInfo { string storage_id = 1; }
