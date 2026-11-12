@@ -493,14 +493,6 @@ Future improvements could include replicated media storage, background migration
 - [Verification Report](docs/INTERVIEW_VERIFICATION.md)
 - [etcd Setup & Limitations](docs/ETCD.md)
 
----
 
-## 👩‍💻 Author
-
-**Shreyasi Nath**
-
-GitHub: [@Shreyasi08](https://github.com/Shreyasi08)
-
----
 
 **TritonTube — Exploring distributed systems through scalable video storage, streaming, and fault-tolerant metadata management.**
